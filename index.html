@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Beacon 復活尋寶</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/lucide-static@0.321.0/font/lucide.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+HK:wght@400;500;700;900&display=swap');
+        body { font-family: 'Noto Sans HK', sans-serif; }
+        .animate-in { animation: fadeIn 0.5s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-slate-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // Lucide Icon 簡單組件封裝
+        const Icon = ({ name, size = 24, className = "" }) => (
+            <i data-lucide={name} style={{ width: size, height: size }} className={`lucide-${name} ${className}`}></i>
+        );
+
+        const App = () => {
+            const correctAnswers = { 1: 'B', 2: 'B', 3: 'B', 4: 'B', 5: 'A' };
+            const tasks = [
+                { id: 1, location: '面向興華街 (玻璃幕牆)', hint: '留意窗外的花園形狀...' },
+                { id: 2, location: '面向蘇屋邨 (北面窗戶)', hint: '觀察大廈的名字...' },
+                { id: 3, location: '面向順寧道 (舊區方向)', hint: '聞一聞空氣中的豆香...' },
+                { id: 4, location: '中心大堂 (新設施區)', hint: '看看我們的設計概念...' },
+                { id: 5, location: '中心正門 (入口處)', hint: '歡迎來到 The Beacon...' }
+            ];
+
+            const [userAnswers, setUserAnswers] = useState({});
+            const [activeTask, setActiveTask] = useState(null);
+            const [gameState, setGameState] = useState('list');
+            const [errorIds, setErrorIds] = useState([]);
+            const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
+
+            useEffect(() => {
+                const timer = setInterval(() => setCurrentTime(new Date().toLocaleTimeString()), 1000);
+                if (window.lucide) window.lucide.createIcons();
+                return () => clearInterval(timer);
+            }, [gameState, activeTask]);
+
+            const handleAnswer = (option) => {
+                setUserAnswers({ ...userAnswers, [activeTask.id]: option });
+                setGameState('list');
+                setActiveTask(null);
+            };
+
+            const checkResults = () => {
+                const mistakes = tasks.filter(t => userAnswers[t.id] !== correctAnswers[t.id]).map(t => t.id);
+                if (mistakes.length === 0 && Object.keys(userAnswers).length === tasks.length) {
+                    setGameState('result');
+                } else {
+                    setErrorIds(mistakes);
+                    if (Object.keys(userAnswers).length < tasks.length) alert('請先完成所有任務！');
+                    else alert('部分答案不正確，請重新觀察。');
+                }
+            };
+
+            return (
+                <div className="min-h-screen pb-10">
+                    <header className="bg-sky-600 text-white p-6 rounded-b-3xl shadow-lg mb-6">
+                        <h1 className="text-2xl font-bold flex items-center gap-2">The Beacon 復活尋寶</h1>
+                        <p className="text-sky-100 text-sm mt-1">長沙灣社區探索之旅</p>
+                    </header>
+
+                    <main className="px-5">
+                        {gameState === 'list' && (
+                            <div className="space-y-4 animate-in">
+                                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6 rounded-r-lg text-sm text-yellow-800">
+                                    指令：請到指定方位尋找貼紙，根據實體題目選擇答案。
+                                </div>
+                                {tasks.map(task => (
+                                    <div key={task.id} onClick={() => { setActiveTask(task); setGameState('quiz'); }}
+                                        className={`p-5 rounded-2xl bg-white shadow-sm border-2 transition-all ${userAnswers[task.id] ? 'border-green-200 bg-green-50' : errorIds.includes(task.id) ? 'border-red-200 bg-red-50' : 'border-transparent'}`}>
+                                        <div className="flex justify-between items-center">
+                                            <div className="flex items-center gap-3">
+                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${userAnswers[task.id] ? 'bg-green-500 text-white' : 'bg-sky-100 text-sky-600'}`}>{task.id}</div>
+                                                <div>
+                                                    <h3 className="font-bold">任務 #{task.id}</h3>
+                                                    <p className="text-sm text-slate-500">{task.location}</p>
+                                                </div>
+                                            </div>
+                                            {userAnswers[task.id] ? <span className="text-green-500">✓</span> : <span className="text-slate-300">○</span>}
+                                        </div>
+                                        {errorIds.includes(task.id) && <p className="mt-2 text-xs text-red-500 font-bold">需要重新觀察！貼士：{task.hint}</p>}
+                                    </div>
+                                ))}
+                                <button onClick={checkResults} disabled={Object.keys(userAnswers).length < tasks.length}
+                                    className={`w-full py-4 rounded-2xl font-bold mt-6 shadow-lg ${Object.keys(userAnswers).length === tasks.length ? 'bg-yellow-400' : 'bg-slate-200 text-slate-400'}`}>提交檢查</button>
+                            </div>
+                        )}
+
+                        {gameState === 'quiz' && (
+                            <div className="animate-in">
+                                <button onClick={() => setGameState('list')} className="text-sky-600 font-medium mb-6 flex items-center gap-1">← 返回列表</button>
+                                <div className="bg-white rounded-3xl p-8 shadow-xl text-center border-t-8 border-yellow-400">
+                                    <span className="inline-block px-4 py-1 bg-sky-100 text-sky-700 rounded-full text-sm font-bold mb-4">{activeTask.location}</span>
+                                    <h2 className="text-xl font-bold mb-8">請根據貼紙上的題目選擇：</h2>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        {['A', 'B', 'C', 'D'].map(opt => (
+                                            <button key={opt} onClick={() => handleAnswer(opt)}
+                                                className={`h-24 rounded-2xl text-2xl font-black ${userAnswers[activeTask.id] === opt ? 'bg-sky-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{opt}</button>
+                                        ))}
+                                    </div>
+                                    <div className="mt-8 p-4 bg-yellow-50 rounded-xl text-left text-sm text-yellow-800">
+                                        <strong>小貼士：</strong><br/>{activeTask.hint}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {gameState === 'result' && (
+                            <div className="text-center animate-in">
+                                <div className="bg-white rounded-3xl p-8 shadow-2xl border-4 border-yellow-400">
+                                    <div className="text-5xl mb-4">🏆</div>
+                                    <h2 className="text-3xl font-black mb-2">恭喜完成！</h2>
+                                    <p className="text-slate-500 mb-6">你已正式成為「蘇屋社區達人」</p>
+                                    <div className="bg-slate-900 text-white p-6 rounded-2xl mb-6">
+                                        <p className="text-xs text-slate-400 mb-1">禮品換領信</p>
+                                        <div className="text-2xl font-mono font-bold text-yellow-300">BEACON-2026-HQ</div>
+                                        <div className="mt-4 border-t border-slate-700 pt-4">
+                                            <p className="text-lg font-bold">{currentTime}</p>
+                                            <p className="text-[10px] text-slate-500">此畫面實時更新，請勿截圖</p>
+                                        </div>
+                                    </div>
+                                    <p className="text-sm text-slate-400 italic">請向櫃檯同事出示此頁面</p>
+                                </div>
+                                <button onClick={() => {setUserAnswers({}); setGameState('list');}} className="mt-8 text-slate-400 text-sm">重新開始</button>
+                            </div>
+                        )}
+                    </main>
+                    <footer className="mt-10 text-center text-slate-400 text-xs px-10">
+                        <p>© 2026 YMCA of Hong Kong - The Beacon (港青耀信)</p>
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
