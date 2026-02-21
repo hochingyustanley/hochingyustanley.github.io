@@ -2,30 +2,50 @@
 <html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>The Beacon 復活尋寶</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 基礎庫載入 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/lucide-static@0.321.0/font/lucide.css" rel="stylesheet">
+    
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+HK:wght@400;500;700;900&display=swap');
-        body { font-family: 'Noto Sans HK', sans-serif; }
-        .animate-in { animation: fadeIn 0.5s ease-out; }
+        body { 
+            font-family: 'Noto Sans HK', sans-serif; 
+            background-color: #f8fafc;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .animate-in { animation: fadeIn 0.4s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* 修正掃描器容器樣式，防止白色閃爍 */
+        #qr-reader {
+            width: 100% !important;
+            border: none !important;
+            background: #fff;
+            border-radius: 1.5rem;
+            overflow: hidden;
+        }
+        #qr-reader__scan_region video {
+            border-radius: 1rem;
+            object-fit: cover !important;
+        }
     </style>
 </head>
-<body class="bg-slate-50">
-    <div id="root"></div>
+<body>
+    <div id="root">
+        <!-- 初始加載狀態，防止白屏 -->
+        <div class="flex items-center justify-center min-h-screen">
+            <div class="text-sky-600 font-bold animate-pulse">載入中...</div>
+        </div>
+    </div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
-
-        // Lucide Icon 簡單組件封裝
-        const Icon = ({ name, size = 24, className = "" }) => (
-            <i data-lucide={name} style={{ width: size, height: size }} className={`lucide-${name} ${className}`}></i>
-        );
+        const { useState, useEffect, useRef } = React;
 
         const App = () => {
             const correctAnswers = { 1: 'B', 2: 'B', 3: 'B', 4: 'B', 5: 'A' };
@@ -37,110 +57,184 @@
                 { id: 5, location: '中心正門 (入口處)', hint: '歡迎來到 The Beacon...' }
             ];
 
-            const [userAnswers, setUserAnswers] = useState({});
+            const [userAnswers, setUserAnswers] = useState(() => {
+                try {
+                    const saved = localStorage.getItem('beacon_quest_answers');
+                    return saved ? JSON.parse(saved) : {};
+                } catch (e) { return {}; }
+            });
+            
+            const [gameState, setGameState] = useState('list'); 
             const [activeTask, setActiveTask] = useState(null);
-            const [gameState, setGameState] = useState('list');
             const [errorIds, setErrorIds] = useState([]);
             const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
+            const [uniqueId, setUniqueId] = useState('');
+            const scannerInstance = useRef(null);
 
             useEffect(() => {
                 const timer = setInterval(() => setCurrentTime(new Date().toLocaleTimeString()), 1000);
+                
+                // 初始化 ID
+                let savedId = localStorage.getItem('beacon_quest_user_id');
+                if (!savedId) {
+                    savedId = `BEACON-${Math.floor(100000 + Math.random() * 900000)}`;
+                    localStorage.setItem('beacon_quest_user_id', savedId);
+                }
+                setUniqueId(savedId);
+
+                // 處理 URL 直接訪問
+                const urlParams = new URLSearchParams(window.location.search);
+                const taskId = parseInt(urlParams.get('task'));
+                if (taskId && tasks.find(t => t.id === taskId)) {
+                    setActiveTask(tasks.find(t => t.id === taskId));
+                    setGameState('quiz');
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                }
+
                 if (window.lucide) window.lucide.createIcons();
                 return () => clearInterval(timer);
-            }, [gameState, activeTask]);
+            }, []);
+
+            // 掃描器邏輯
+            useEffect(() => {
+                if (gameState === 'scan') {
+                    const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+                    const html5QrCode = new Html5Qrcode("qr-reader");
+                    
+                    const startScanner = async () => {
+                        try {
+                            await html5QrCode.start(
+                                { facingMode: "environment" }, 
+                                config,
+                                (decodedText) => {
+                                    try {
+                                        const url = new URL(decodedText);
+                                        const tid = parseInt(url.searchParams.get('task'));
+                                        const found = tasks.find(t => t.id === tid);
+                                        if (found) {
+                                            html5QrCode.stop().then(() => {
+                                                setActiveTask(found);
+                                                setGameState('quiz');
+                                            });
+                                        }
+                                    } catch (err) {
+                                        console.log("Not a task URL");
+                                    }
+                                }
+                            );
+                            scannerInstance.current = html5QrCode;
+                        } catch (err) {
+                            alert("無法啟動相機，請檢查瀏覽器權限。");
+                            setGameState('list');
+                        }
+                    };
+
+                    startScanner();
+                }
+
+                return () => {
+                    if (scannerInstance.current && scannerInstance.current.isScanning) {
+                        scannerInstance.current.stop().catch(e => console.error(e));
+                    }
+                };
+            }, [gameState]);
 
             const handleAnswer = (option) => {
-                setUserAnswers({ ...userAnswers, [activeTask.id]: option });
+                const updated = { ...userAnswers, [activeTask.id]: option };
+                setUserAnswers(updated);
+                localStorage.setItem('beacon_quest_answers', JSON.stringify(updated));
                 setGameState('list');
-                setActiveTask(null);
             };
 
-            const checkResults = () => {
+            const checkFinal = () => {
                 const mistakes = tasks.filter(t => userAnswers[t.id] !== correctAnswers[t.id]).map(t => t.id);
                 if (mistakes.length === 0 && Object.keys(userAnswers).length === tasks.length) {
                     setGameState('result');
                 } else {
                     setErrorIds(mistakes);
-                    if (Object.keys(userAnswers).length < tasks.length) alert('請先完成所有任務！');
-                    else alert('部分答案不正確，請重新觀察。');
+                    alert(Object.keys(userAnswers).length < tasks.length ? "請完成所有任務！" : "部分答案有誤，請重試。");
                 }
             };
 
             return (
-                <div className="min-h-screen pb-10">
-                    <header className="bg-sky-600 text-white p-6 rounded-b-3xl shadow-lg mb-6">
-                        <h1 className="text-2xl font-bold flex items-center gap-2">The Beacon 復活尋寶</h1>
-                        <p className="text-sky-100 text-sm mt-1">長沙灣社區探索之旅</p>
+                <div className="min-h-screen max-w-md mx-auto bg-slate-50 shadow-inner overflow-x-hidden">
+                    <header className="bg-sky-600 text-white p-6 rounded-b-[2rem] shadow-md text-center">
+                        <h1 className="text-xl font-black tracking-tight">THE BEACON 復活尋寶</h1>
+                        <p className="text-sky-200 text-xs mt-1">YMCA OF HONG KONG</p>
                     </header>
 
-                    <main className="px-5">
+                    <main className="p-5">
                         {gameState === 'list' && (
-                            <div className="space-y-4 animate-in">
-                                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6 rounded-r-lg text-sm text-yellow-800">
-                                    指令：請到指定方位尋找貼紙，根據實體題目選擇答案。
-                                </div>
-                                {tasks.map(task => (
-                                    <div key={task.id} onClick={() => { setActiveTask(task); setGameState('quiz'); }}
-                                        className={`p-5 rounded-2xl bg-white shadow-sm border-2 transition-all ${userAnswers[task.id] ? 'border-green-200 bg-green-50' : errorIds.includes(task.id) ? 'border-red-200 bg-red-50' : 'border-transparent'}`}>
-                                        <div className="flex justify-between items-center">
+                            <div className="animate-in space-y-4">
+                                <button onClick={() => setGameState('scan')} className="w-full bg-yellow-400 p-5 rounded-2xl font-black text-lg shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all">
+                                    <i data-lucide="camera"></i> 掃描 QR CODE 解鎖
+                                </button>
+                                
+                                <div className="space-y-3">
+                                    {tasks.map(t => (
+                                        <div key={t.id} className={`p-4 rounded-xl border-2 flex items-center justify-between ${userAnswers[t.id] ? 'bg-green-50 border-green-200' : 'bg-white border-slate-100'}`}>
                                             <div className="flex items-center gap-3">
-                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${userAnswers[task.id] ? 'bg-green-500 text-white' : 'bg-sky-100 text-sky-600'}`}>{task.id}</div>
-                                                <div>
-                                                    <h3 className="font-bold">任務 #{task.id}</h3>
-                                                    <p className="text-sm text-slate-500">{task.location}</p>
+                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${userAnswers[t.id] ? 'bg-green-500 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                                    {t.id}
                                                 </div>
+                                                <div className="text-sm font-bold text-slate-600">{t.location}</div>
                                             </div>
-                                            {userAnswers[task.id] ? <span className="text-green-500">✓</span> : <span className="text-slate-300">○</span>}
+                                            {userAnswers[t.id] && <i data-lucide="check-circle-2" className="text-green-500"></i>}
                                         </div>
-                                        {errorIds.includes(task.id) && <p className="mt-2 text-xs text-red-500 font-bold">需要重新觀察！貼士：{task.hint}</p>}
-                                    </div>
-                                ))}
-                                <button onClick={checkResults} disabled={Object.keys(userAnswers).length < tasks.length}
-                                    className={`w-full py-4 rounded-2xl font-bold mt-6 shadow-lg ${Object.keys(userAnswers).length === tasks.length ? 'bg-yellow-400' : 'bg-slate-200 text-slate-400'}`}>提交檢查</button>
+                                    ))}
+                                </div>
+
+                                <button onClick={checkFinal} disabled={Object.keys(userAnswers).length < tasks.length} className={`w-full py-4 rounded-xl font-bold mt-4 ${Object.keys(userAnswers).length === tasks.length ? 'bg-sky-600 text-white shadow-md' : 'bg-slate-200 text-slate-400'}`}>
+                                    提交檢查
+                                </button>
                             </div>
                         )}
 
-                        {gameState === 'quiz' && (
-                            <div className="animate-in">
-                                <button onClick={() => setGameState('list')} className="text-sky-600 font-medium mb-6 flex items-center gap-1">← 返回列表</button>
-                                <div className="bg-white rounded-3xl p-8 shadow-xl text-center border-t-8 border-yellow-400">
-                                    <span className="inline-block px-4 py-1 bg-sky-100 text-sky-700 rounded-full text-sm font-bold mb-4">{activeTask.location}</span>
-                                    <h2 className="text-xl font-bold mb-8">請根據貼紙上的題目選擇：</h2>
-                                    <div className="grid grid-cols-2 gap-4">
+                        {gameState === 'scan' && (
+                            <div className="animate-in text-center space-y-4">
+                                <div id="qr-reader" className="shadow-xl"></div>
+                                <button onClick={() => setGameState('list')} className="text-slate-500 font-bold py-2 px-6 bg-white rounded-full shadow-sm border border-slate-100">取消掃描</button>
+                            </div>
+                        )}
+
+                        {gameState === 'quiz' && activeTask && (
+                            <div className="animate-in space-y-6">
+                                <div className="bg-white p-8 rounded-3xl shadow-xl border-t-8 border-yellow-400 text-center">
+                                    <h2 className="font-bold text-slate-500 mb-2">任務 #{activeTask.id}</h2>
+                                    <p className="text-lg font-black text-slate-800 mb-6">{activeTask.location}</p>
+                                    <div className="grid grid-cols-2 gap-3">
                                         {['A', 'B', 'C', 'D'].map(opt => (
-                                            <button key={opt} onClick={() => handleAnswer(opt)}
-                                                className={`h-24 rounded-2xl text-2xl font-black ${userAnswers[activeTask.id] === opt ? 'bg-sky-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{opt}</button>
+                                            <button key={opt} onClick={() => handleAnswer(opt)} className="h-20 bg-slate-50 border-2 border-slate-100 rounded-xl text-2xl font-black text-slate-700 active:bg-sky-500 active:text-white transition-colors">
+                                                {opt}
+                                            </button>
                                         ))}
                                     </div>
-                                    <div className="mt-8 p-4 bg-yellow-50 rounded-xl text-left text-sm text-yellow-800">
-                                        <strong>小貼士：</strong><br/>{activeTask.hint}
+                                    <div className="mt-6 p-4 bg-yellow-50 rounded-xl text-left text-xs text-yellow-800">
+                                        <strong>提示：</strong> {activeTask.hint}
                                     </div>
                                 </div>
                             </div>
                         )}
 
                         {gameState === 'result' && (
-                            <div className="text-center animate-in">
-                                <div className="bg-white rounded-3xl p-8 shadow-2xl border-4 border-yellow-400">
-                                    <div className="text-5xl mb-4">🏆</div>
-                                    <h2 className="text-3xl font-black mb-2">恭喜完成！</h2>
-                                    <p className="text-slate-500 mb-6">你已正式成為「蘇屋社區達人」</p>
-                                    <div className="bg-slate-900 text-white p-6 rounded-2xl mb-6">
-                                        <p className="text-xs text-slate-400 mb-1">禮品換領信</p>
-                                        <div className="text-2xl font-mono font-bold text-yellow-300">BEACON-2026-HQ</div>
-                                        <div className="mt-4 border-t border-slate-700 pt-4">
-                                            <p className="text-lg font-bold">{currentTime}</p>
-                                            <p className="text-[10px] text-slate-500">此畫面實時更新，請勿截圖</p>
-                                        </div>
+                            <div className="animate-in text-center space-y-6">
+                                <div className="bg-white p-8 rounded-3xl shadow-2xl border-4 border-yellow-400">
+                                    <div className="text-5xl mb-4">🥳</div>
+                                    <h2 className="text-2xl font-black text-slate-800">恭喜全部答對！</h2>
+                                    <div className="my-6 bg-slate-900 p-6 rounded-2xl text-white">
+                                        <p className="text-[10px] text-slate-400 mb-2 uppercase tracking-widest">換領編號</p>
+                                        <p className="text-2xl font-mono font-bold text-yellow-300">{uniqueId}</p>
+                                        <div className="mt-4 pt-4 border-t border-slate-800 text-lg font-bold">{currentTime}</div>
                                     </div>
-                                    <p className="text-sm text-slate-400 italic">請向櫃檯同事出示此頁面</p>
+                                    <p className="text-xs text-slate-400 italic">請向櫃檯職員展示此畫面</p>
                                 </div>
-                                <button onClick={() => {setUserAnswers({}); setGameState('list');}} className="mt-8 text-slate-400 text-sm">重新開始</button>
+                                <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="text-slate-300 text-xs underline">重置所有進度</button>
                             </div>
                         )}
                     </main>
-                    <footer className="mt-10 text-center text-slate-400 text-xs px-10">
-                        <p>© 2026 YMCA of Hong Kong - The Beacon (港青耀信)</p>
+                    
+                    <footer className="py-8 text-center text-[10px] text-slate-300 uppercase tracking-widest">
+                        The Beacon © 2026 YMCA OF HK
                     </footer>
                 </div>
             );
