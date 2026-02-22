@@ -3,25 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>YMCAHK The Beacon 復活尋寶 🐰🥚</title>
+    <title>The Beacon 復活尋寶 🐰🥚</title>
     <!-- 基礎庫載入 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/lucide-static@0.321.0/font/lucide.css" rel="stylesheet">
     
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+HK:wght@400;500;700;900&display=swap');
         body { 
             font-family: 'Noto Sans HK', sans-serif; 
-            background-color: #fff7ed; /* 復活節暖黃背景 bg-orange-50 */
+            background-color: #fff7ed;
             -webkit-tap-highlight-color: transparent;
+            overflow-x: hidden;
         }
-        .animate-in { animation: fadeIn 0.4s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        
+
+        /* 頁面切換動畫 */
+        .page-enter {
+            animation: pageSlideIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        @keyframes pageSlideIn {
+            from { opacity: 0; transform: translateX(30px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
         .shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
         @keyframes shake {
             10%, 90% { transform: translate3d(-1px, 0, 0); }
@@ -38,31 +47,26 @@
             overflow: hidden;
         }
         
-        /* 復活節裝飾圓點背景 */
         .easter-bg {
             background-image: radial-gradient(#fde68a 2px, transparent 2px);
-            background-size: 20px 20px;
+            background-size: 30px 30px;
         }
+
+        /* 按鈕互動效果 */
+        .btn-bounce { transition: transform 0.1s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .btn-bounce:active { transform: scale(0.92); }
     </style>
 </head>
 <body class="easter-bg">
-    <div id="root">
-        <div class="flex items-center justify-center min-h-screen">
-            <div class="text-pink-500 font-bold animate-pulse flex flex-col items-center gap-2">
-                <span class="text-4xl">🐰</span>
-                <span>尋寶準備中...</span>
-            </div>
-        </div>
-    </div>
+    <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
         const App = () => {
-            // 設定區
             const correctAnswers = { 1: 'B', 2: 'B', 3: 'B', 4: 'B', 5: 'A' };
             const taskCodes = { 1: 'A7B2', 2: 'K9X4', 3: 'P3M8', 4: 'R5W1', 5: 'E2T6' };
-            const STAFF_PASSCODE = "HELP88"; // 職員專用碼
+            const STAFF_PASSCODE = "HELP88";
 
             const tasks = [
                 { id: 1, location: '面向興華街 (玻璃幕牆)', hint: '留意窗外的花園形狀...' },
@@ -72,12 +76,7 @@
                 { id: 5, location: '中心正門 (入口處)', hint: '歡迎來到 The Beacon...' }
             ];
 
-            // 遊戲狀態存儲
-            const [userAnswers, setUserAnswers] = useState(() => {
-                const saved = localStorage.getItem('beacon_answers');
-                return saved ? JSON.parse(saved) : {};
-            });
-            
+            const [userAnswers, setUserAnswers] = useState(() => JSON.parse(localStorage.getItem('beacon_answers')) || {});
             const [gameState, setGameState] = useState('list'); 
             const [activeTask, setActiveTask] = useState(null);
             const [manualCode, setManualCode] = useState('');
@@ -85,34 +84,23 @@
             const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
             const [uniqueId, setUniqueId] = useState('');
             
-            // 技能與錯誤狀態
+            // 錦囊狀態 (整個挑戰限用一次)
             const [hasUsed5050, setHasUsed5050] = useState(() => localStorage.getItem('used_5050') === 'true');
+            const [hasUsedHint, setHasUsedHint] = useState(() => localStorage.getItem('used_hint') === 'true');
+            
+            // 當前題目顯示邏輯
             const [is5050Active, setIs5050Active] = useState(false);
             const [fiftyFiftyOptions, setFiftyFiftyOptions] = useState(null); 
+            const [isHintVisible, setIsHintVisible] = useState(false);
+
             const [wrongOptions, setWrongOptions] = useState([]); 
-            
-            // 職員提示狀態
-            const [hasUsedStaffHint, setHasUsedStaffHint] = useState(() => localStorage.getItem('used_staff') === 'true');
-            const [showStaffInput, setShowStaffInput] = useState(false);
+            const [cooldown, setCooldown] = useState(0);
+            const [attempts, setAttempts] = useState(() => JSON.parse(localStorage.getItem('beacon_attempts')) || {});
+            const [feedback, setFeedback] = useState(null); 
             const [staffCodeInput, setStaffCodeInput] = useState('');
             const [staffError, setStaffError] = useState('');
-
-            // 冷卻機制狀態 (20秒倒數)
-            const [cooldown, setCooldown] = useState(0);
-
-            // 重置確認狀態
-            const [showResetConfirm, setShowResetConfirm] = useState(false);
-            
-            // 每題嘗試次數記錄
-            const [attempts, setAttempts] = useState(() => {
-                const saved = localStorage.getItem('beacon_attempts');
-                return saved ? JSON.parse(saved) : {};
-            });
-
-            const [feedback, setFeedback] = useState(null); 
             const scannerInstance = useRef(null);
 
-            // 初始化與時鐘
             useEffect(() => {
                 const timer = setInterval(() => setCurrentTime(new Date().toLocaleTimeString()), 1000);
                 let savedId = localStorage.getItem('beacon_quest_user_id');
@@ -121,23 +109,34 @@
                     localStorage.setItem('beacon_quest_user_id', savedId);
                 }
                 setUniqueId(savedId);
-
                 if (window.lucide) window.lucide.createIcons();
                 return () => clearInterval(timer);
             }, []);
 
-            // 倒數計時器 Logic
+            // 每次切換狀態時重新渲染圖標
+            useEffect(() => {
+                if (window.lucide) window.lucide.createIcons();
+            }, [gameState, feedback, isHintVisible, hasUsed5050, hasUsedHint]);
+
             useEffect(() => {
                 let timerId;
                 if (cooldown > 0) {
-                    timerId = setTimeout(() => {
-                        setCooldown(prev => prev - 1);
-                    }, 1000);
+                    timerId = setTimeout(() => setCooldown(prev => prev - 1), 1000);
                 }
                 return () => clearTimeout(timerId);
             }, [cooldown]);
 
-            // 掃描器邏輯
+            useEffect(() => {
+                if (gameState === 'result') {
+                    confetti({
+                        particleCount: 150,
+                        spread: 70,
+                        origin: { y: 0.6 },
+                        colors: ['#f472b6', '#fbbf24', '#60a5fa', '#34d399']
+                    });
+                }
+            }, [gameState]);
+
             useEffect(() => {
                 if (gameState === 'scan') {
                     const html5QrCode = new Html5Qrcode("qr-reader");
@@ -147,9 +146,7 @@
                             const tid = parseInt(url.searchParams.get('task'));
                             const found = tasks.find(t => t.id === tid);
                             if (found) {
-                                html5QrCode.stop().then(() => {
-                                    startTask(found);
-                                });
+                                html5QrCode.stop().then(() => startTask(found));
                             }
                         } catch (e) {}
                     }).catch(() => {});
@@ -164,10 +161,10 @@
                 setFiftyFiftyOptions(null);
                 setWrongOptions([]); 
                 setFeedback(null);
-                setShowStaffInput(false);
+                setIsHintVisible(false);
                 setStaffCodeInput('');
                 setStaffError('');
-                setCooldown(0); // 確保每次進入任務時沒有冷卻
+                setCooldown(0);
                 setGameState('quiz');
             };
 
@@ -183,7 +180,7 @@
                 }
             };
 
-            const use5050 = () => {
+            const handleUse5050 = () => {
                 if (hasUsed5050) return;
                 const correct = correctAnswers[activeTask.id];
                 let availableIncorrect = ['A', 'B', 'C', 'D'].filter(o => o !== correct && !wrongOptions.includes(o));
@@ -194,12 +191,17 @@
                 setIs5050Active(true);
             };
 
-            const handleAnswer = (option) => {
-                if (feedback || cooldown > 0) return; // 冷卻中或已有結果時不可點擊
+            const handleUseHint = () => {
+                if (hasUsedHint) return;
+                setHasUsedHint(true);
+                localStorage.setItem('used_hint', 'true');
+                setIsHintVisible(true);
+            };
 
+            const handleAnswer = (option) => {
+                if (feedback || cooldown > 0) return;
                 const isCorrect = option === correctAnswers[activeTask.id];
                 const currentAttempts = (attempts[activeTask.id] || 0) + 1;
-                
                 const newAttempts = { ...attempts, [activeTask.id]: currentAttempts };
                 setAttempts(newAttempts);
                 localStorage.setItem('beacon_attempts', JSON.stringify(newAttempts));
@@ -212,74 +214,51 @@
                     setTimeout(() => setGameState('list'), 1500);
                 } else {
                     setWrongOptions(prev => [...prev, option]);
-
                     if (currentAttempts === 1) {
-                        // 第一次答錯：啟動 20 秒冷卻，不設定 feedback 讓畫面由 cooldown 控制
                         setCooldown(20);
                     } else {
-                        // 第二次答錯：直接徹底失敗，顯示找職員
                         setFeedback({ type: 'error', message: '兩次機會已用完！請找職員協助。' });
                     }
                 }
             };
 
             const handleStaffSubmit = () => {
+                setStaffError('');
                 if (staffCodeInput.toUpperCase() === STAFF_PASSCODE) {
-                    setHasUsedStaffHint(true);
-                    localStorage.setItem('used_staff', 'true');
-                    
                     const newAttempts = { ...attempts, [activeTask.id]: 0 };
                     setAttempts(newAttempts);
                     localStorage.setItem('beacon_attempts', JSON.stringify(newAttempts));
-                    
                     setFeedback(null); 
-                    setShowStaffInput(false);
-                    setStaffCodeInput('');
-                    setStaffError('');
+                    setStaffCodeInput(''); 
                 } else {
-                    setStaffError('授權碼錯誤！');
+                    setStaffError('授權碼不正確！');
                 }
-            };
-
-            const checkFinal = () => {
-                if (Object.keys(userAnswers).length === tasks.length) {
-                    setGameState('result');
-                }
-            };
-
-            const resetProgress = () => {
-                localStorage.clear();
-                window.location.reload();
-            };
-
-            const isOptionHidden = (opt) => {
-                if (wrongOptions.includes(opt)) return true;
-                if (is5050Active && fiftyFiftyOptions && !fiftyFiftyOptions.includes(opt)) return true;
-                return false;
             };
 
             return (
                 <div className="min-h-screen max-w-md mx-auto relative overflow-x-hidden">
-                    {/* 復活節風格 Header */}
-                    <header className="bg-gradient-to-r from-pink-400 to-orange-400 text-white p-6 rounded-b-[2.5rem] shadow-lg text-center relative overflow-hidden">
+                    <header className="bg-gradient-to-r from-pink-400 to-orange-400 text-white p-6 rounded-b-[2.5rem] shadow-lg text-center relative overflow-hidden z-20">
                         <div className="absolute top-0 left-0 w-full h-full bg-white/10" style={{ backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.3) 2px, transparent 2px)', backgroundSize: '20px 20px' }}></div>
                         <div className="relative z-10 flex flex-col items-center">
-                            <span className="text-3xl mb-1">🐰🥚</span>
-                            <h1 className="text-xl font-black tracking-widest uppercase text-white drop-shadow-md">The Beacon 復活尋寶</h1>
+                            <span className="text-4xl mb-1 animate-bounce">🐰</span>
+                            <h1 className="text-xl font-black tracking-widest uppercase drop-shadow-md">The Beacon 復活尋寶</h1>
                             <p className="text-pink-100 text-[10px] mt-1 font-bold tracking-widest">YMCA OF HONG KONG</p>
                         </div>
                     </header>
 
                     <main className="p-5 relative z-10">
                         {gameState === 'list' && (
-                            <div className="animate-in space-y-5">
-                                <button onClick={() => setGameState('scan')} className="w-full bg-yellow-400 p-6 rounded-3xl font-black text-xl text-yellow-900 shadow-[0_8px_0_rgb(217,119,6)] active:translate-y-1 active:shadow-none transition-all flex items-center justify-center gap-3 border-2 border-yellow-300">
+                            <div className="page-enter space-y-5">
+                                <button onClick={() => setGameState('scan')} className="btn-bounce w-full bg-yellow-400 p-6 rounded-3xl font-black text-xl text-yellow-900 shadow-[0_8px_0_rgb(217,119,6)] flex items-center justify-center gap-3 border-2 border-yellow-300">
                                     <i data-lucide="scan" className="w-6 h-6"></i> 掃描 / 解鎖任務 🥚
                                 </button>
 
                                 <div className="grid grid-cols-1 gap-3 pt-4">
-                                    {tasks.map(t => (
-                                        <div key={t.id} className={`p-5 rounded-2xl border-2 flex items-center justify-between transition-all ${userAnswers[t.id] ? 'bg-green-50 border-green-300' : 'bg-white border-pink-100 shadow-sm'}`}>
+                                    {tasks.map((t, idx) => (
+                                        <div 
+                                            key={t.id} 
+                                            className={`page-enter p-5 rounded-2xl border-2 flex items-center justify-between transition-all ${userAnswers[t.id] ? 'bg-green-50 border-green-300' : 'bg-white border-pink-100 shadow-sm'}`}
+                                        >
                                             <div className="flex items-center gap-4">
                                                 <div className={`w-12 h-12 rounded-full flex items-center justify-center text-xl font-black ${userAnswers[t.id] ? 'bg-green-400 text-white shadow-lg' : 'bg-pink-100 text-pink-400 border border-pink-200'}`}>
                                                     {userAnswers[t.id] ? '✓' : t.id}
@@ -294,14 +273,18 @@
                                     ))}
                                 </div>
 
-                                <button onClick={checkFinal} disabled={Object.keys(userAnswers).length < tasks.length} className={`w-full py-5 rounded-2xl font-black text-lg mt-4 shadow-xl transition-all ${Object.keys(userAnswers).length === tasks.length ? 'bg-pink-500 text-white active:scale-95' : 'bg-slate-200 text-slate-400 opacity-50'}`}>
+                                <button 
+                                    onClick={() => setGameState('result')} 
+                                    disabled={Object.keys(userAnswers).length < tasks.length} 
+                                    className={`btn-bounce w-full py-5 rounded-2xl font-black text-lg mt-4 shadow-xl transition-all ${Object.keys(userAnswers).length === tasks.length ? 'bg-pink-500 text-white' : 'bg-slate-200 text-slate-400 opacity-50'}`}
+                                >
                                     完成換領禮品 🎁
                                 </button>
                             </div>
                         )}
 
                         {gameState === 'scan' && (
-                            <div className="animate-in space-y-6 text-center">
+                            <div className="page-enter space-y-6 text-center">
                                 <div className="bg-white p-4 rounded-[2rem] shadow-xl border-2 border-pink-100">
                                     <div id="qr-reader"></div>
                                     <p className="text-[10px] text-pink-400 mt-4 font-bold">請對準任務貼紙上的復活彩蛋 QR Code 🐰</p>
@@ -312,8 +295,8 @@
                                 <form onSubmit={handleManualSubmit} className="bg-white p-6 rounded-[2rem] shadow-md border-2 border-pink-100 space-y-4">
                                     <h3 className="font-black text-pink-600">手動輸入編碼</h3>
                                     <div className="flex gap-2 w-full">
-                                        <input type="text" maxLength="4" value={manualCode} onChange={e=>{setManualCode(e.target.value); setManualCodeError('');}} className="flex-1 min-w-0 w-full bg-pink-50 border-2 border-pink-100 rounded-xl px-3 py-3 text-center font-mono font-bold text-2xl focus:border-pink-400 outline-none uppercase text-pink-700" placeholder="XXXX" />
-                                        <button className="bg-pink-500 text-white px-5 shrink-0 whitespace-nowrap rounded-xl font-black active:scale-95 shadow-md">確認</button>
+                                        <input type="text" maxLength="4" value={manualCode} onChange={e=>{setManualCode(e.target.value); setManualCodeError('');}} className="flex-1 min-w-0 bg-pink-50 border-2 border-pink-100 rounded-xl px-3 py-3 text-center font-mono font-bold text-2xl focus:border-pink-400 outline-none uppercase text-pink-700" placeholder="XXXX" />
+                                        <button className="btn-bounce bg-pink-500 text-white px-5 shrink-0 whitespace-nowrap rounded-xl font-black shadow-md">確認</button>
                                     </div>
                                     {manualCodeError && <p className="text-xs text-red-500 font-bold">{manualCodeError}</p>}
                                 </form>
@@ -322,142 +305,114 @@
                         )}
 
                         {gameState === 'quiz' && activeTask && (
-                            <div className="animate-in space-y-4">
+                            <div className="page-enter space-y-4">
                                 <div className={`bg-white p-8 rounded-[2.5rem] shadow-2xl border-t-[12px] relative ${feedback?.type === 'success' ? 'border-green-400' : feedback?.type === 'error' ? 'border-red-400 shake' : cooldown > 0 ? 'border-orange-400' : 'border-yellow-400'}`}>
-                                    
                                     <div className="absolute -top-4 left-1/2 -translate-x-1/2 flex gap-2">
                                         <span className="bg-pink-500 text-white px-4 py-1 rounded-full text-[10px] font-black shadow-sm">任務 #{activeTask.id}</span>
-                                        {(attempts[activeTask.id] || 0) > 0 && !feedback && cooldown === 0 && (
-                                            <span className="bg-orange-400 text-white px-4 py-1 rounded-full text-[10px] font-black shadow-sm italic text-xs animate-pulse">補答機會</span>
-                                        )}
                                     </div>
-
                                     <p className="text-lg font-black text-slate-700 mb-2 mt-4 text-center">{activeTask.location}</p>
                                     
                                     {feedback ? (
-                                        // 最終結果 (成功 或 第二次失敗)
-                                        <div className={`py-10 text-center animate-in`}>
-                                            <div className="text-6xl mb-4">{feedback.type === 'success' ? '🎉' : '🥀'}</div>
+                                        <div className="py-10 text-center space-y-4">
+                                            <div className="text-6xl animate-bounce">{feedback.type === 'success' ? '🎉' : '🥀'}</div>
                                             <p className={`text-xl font-black ${feedback.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>{feedback.message}</p>
-                                            
-                                            {feedback.type === 'error' && (attempts[activeTask.id] || 0) >= 2 && (
-                                                <div className="mt-8">
-                                                    {!showStaffInput ? (
-                                                        <button onClick={() => setShowStaffInput(true)} className="bg-pink-500 text-white px-6 py-3 rounded-full font-bold text-sm flex items-center justify-center gap-2 mx-auto shadow-lg active:scale-95 transition-all">
-                                                            <i data-lucide="shield-question" className="w-5 h-5 text-yellow-200"></i> 尋求職員提示解鎖
-                                                        </button>
-                                                    ) : (
-                                                        <div className="bg-pink-50 p-4 rounded-2xl animate-in space-y-3 border-2 border-pink-100">
-                                                            <p className="text-xs font-bold text-pink-600">請交給當值職員輸入授權碼：</p>
-                                                            <div className="flex gap-2 w-full">
-                                                                <input type="password" placeholder="密碼" value={staffCodeInput} onChange={e=>setStaffCodeInput(e.target.value)} className="flex-1 min-w-0 px-3 py-2 rounded-xl text-center font-bold tracking-widest focus:outline-none focus:ring-2 focus:ring-pink-400 border border-pink-200" />
-                                                                <button onClick={handleStaffSubmit} className="bg-pink-500 text-white px-4 shrink-0 whitespace-nowrap rounded-xl font-bold">解鎖</button>
-                                                            </div>
-                                                            {staffError && <p className="text-xs text-red-500 font-bold">{staffError}</p>}
-                                                        </div>
-                                                    )}
+                                            {feedback.type === 'error' && (
+                                                <div className={`bg-pink-50 p-4 rounded-2xl space-y-3 border-2 border-pink-100 ${staffError ? 'shake' : ''}`}>
+                                                    <p className="text-xs font-bold text-pink-600">請交給職員解鎖：</p>
+                                                    <div className="flex gap-2">
+                                                        <input 
+                                                            type="password" 
+                                                            placeholder="密碼" 
+                                                            value={staffCodeInput} 
+                                                            onChange={e=>{setStaffCodeInput(e.target.value); setStaffError('');}} 
+                                                            className={`flex-1 min-w-0 px-3 py-2 rounded-xl text-center border-2 outline-none transition-all ${staffError ? 'border-red-400 bg-red-50' : 'border-pink-200'}`} 
+                                                        />
+                                                        <button onClick={handleStaffSubmit} className="btn-bounce bg-pink-500 text-white px-4 rounded-xl font-bold">解鎖</button>
+                                                    </div>
+                                                    {staffError && <p className="text-[10px] text-red-500 font-black animate-pulse">{staffError}</p>}
                                                 </div>
                                             )}
                                         </div>
                                     ) : cooldown > 0 ? (
-                                        // 第一次失敗：20秒冷卻與強制閱讀提示
-                                        <div className="py-6 text-center animate-in space-y-4">
-                                            <div className="text-5xl animate-bounce">🙈</div>
-                                            <h3 className="text-xl font-black text-orange-500">哎呀，答錯了！</h3>
-                                            <p className="text-slate-500 text-sm font-bold">請利用冷卻時間，仔細閱讀下方提示：</p>
-                                            
-                                            <div className="text-5xl font-black text-pink-500 font-mono my-4 drop-shadow-sm">
-                                                {cooldown}s
+                                        <div className="py-6 text-center space-y-4">
+                                            <div className="text-5xl animate-pulse">🙈</div>
+                                            <h3 className="text-xl font-black text-orange-500">冷卻中...</h3>
+                                            <div className="text-5xl font-black text-pink-500 font-mono my-4 drop-shadow-sm">{cooldown}s</div>
+                                            <div className="p-5 bg-orange-50 rounded-2xl text-left border-2 border-orange-200">
+                                                <p className="text-xs font-black text-orange-500 uppercase mb-2 flex items-center gap-1"><i data-lucide="clock" className="w-4 h-4"></i> 暫時禁止回答</p>
+                                                <p className="text-sm text-orange-900 font-bold leading-relaxed">答錯了！請等待冷卻結束。冷卻期間可嘗試尋找更多線索！</p>
                                             </div>
-                                            
-                                            <div className="p-5 bg-orange-50 rounded-2xl text-left border-2 border-orange-200 shadow-inner relative overflow-hidden transform scale-105 transition-transform">
-                                                <div className="absolute top-0 left-0 w-2 h-full bg-orange-400"></div>
-                                                <p className="text-xs font-black text-orange-500 uppercase mb-2 flex items-center gap-1"><i data-lucide="lightbulb" className="w-4 h-4"></i> 關鍵提示</p>
-                                                <p className="text-base text-orange-900 font-bold leading-relaxed">{activeTask.hint}</p>
-                                            </div>
-                                            <p className="text-[10px] text-slate-400 font-bold mt-4 animate-pulse">倒數結束後即可進行補答...</p>
                                         </div>
                                     ) : (
-                                        // 正常作答畫面
-                                        <div className="space-y-6 pt-4 animate-in">
+                                        <div className="space-y-6 pt-4">
                                             <div className="grid grid-cols-2 gap-3">
-                                                {['A', 'B', 'C', 'D'].map(opt => {
-                                                    const hidden = isOptionHidden(opt);
-                                                    return (
-                                                        <button 
-                                                            key={opt} 
-                                                            disabled={hidden}
-                                                            onClick={() => handleAnswer(opt)} 
-                                                            className={`h-24 rounded-3xl text-3xl font-black transition-all transform ${
-                                                                hidden 
-                                                                ? 'opacity-20 bg-slate-200 text-slate-400 cursor-not-allowed scale-95 shadow-inner' 
-                                                                : 'bg-yellow-50 border-2 border-yellow-200 text-yellow-800 active:bg-pink-400 active:text-white active:scale-95 shadow-sm active:border-pink-500'
-                                                            }`}
-                                                        >
-                                                            {opt}
-                                                        </button>
-                                                    );
-                                                })}
+                                                {['A', 'B', 'C', 'D'].map(opt => (
+                                                    <button 
+                                                        key={opt} 
+                                                        disabled={wrongOptions.includes(opt) || (is5050Active && !fiftyFiftyOptions.includes(opt))}
+                                                        onClick={() => handleAnswer(opt)} 
+                                                        className={`btn-bounce h-24 rounded-3xl text-3xl font-black shadow-md ${
+                                                            wrongOptions.includes(opt) || (is5050Active && !fiftyFiftyOptions.includes(opt))
+                                                            ? 'opacity-20 bg-slate-200 text-slate-400' 
+                                                            : 'bg-yellow-50 border-2 border-yellow-200 text-yellow-800'
+                                                        }`}
+                                                    >
+                                                        {opt}
+                                                    </button>
+                                                ))}
                                             </div>
 
-                                            <div className="flex gap-2">
+                                            {/* 錦囊錦囊區域 */}
+                                            <div className="grid grid-cols-2 gap-3">
                                                 <button 
-                                                    onClick={use5050}
+                                                    onClick={handleUse5050}
                                                     disabled={hasUsed5050}
-                                                    className={`flex-1 py-3 rounded-xl font-black text-xs flex items-center justify-center gap-2 border-2 transition-all ${hasUsed5050 ? 'bg-slate-50 text-slate-300 border-slate-100' : 'bg-purple-50 text-purple-600 border-purple-200 active:scale-95 shadow-sm'}`}
+                                                    className={`py-4 rounded-2xl font-black text-xs flex flex-col items-center justify-center gap-1 border-2 transition-all shadow-sm ${hasUsed5050 ? 'bg-slate-50 text-slate-300 border-slate-100' : 'bg-purple-50 text-purple-600 border-purple-200 active:scale-95'}`}
                                                 >
-                                                    <i data-lucide="zap" className="w-4 h-4"></i> 50/50 (每場限一次)
+                                                    <i data-lucide="zap" className="w-5 h-5 mb-1"></i>
+                                                    <span>50/50 {hasUsed5050 && '(已用)'}</span>
+                                                </button>
+                                                <button 
+                                                    onClick={handleUseHint}
+                                                    disabled={hasUsedHint && !isHintVisible}
+                                                    className={`py-4 rounded-2xl font-black text-xs flex flex-col items-center justify-center gap-1 border-2 transition-all shadow-sm ${hasUsedHint && !isHintVisible ? 'bg-slate-50 text-slate-300 border-slate-100' : 'bg-blue-50 text-blue-600 border-blue-200 active:scale-95'}`}
+                                                >
+                                                    <i data-lucide="lightbulb" className="w-5 h-5 mb-1"></i>
+                                                    <span>提示錦囊 {hasUsedHint && '(已用)'}</span>
                                                 </button>
                                             </div>
 
-                                            <div className="p-4 bg-blue-50/50 rounded-2xl text-left border border-blue-100">
-                                                <p className="text-[10px] font-black text-blue-400 uppercase mb-1 flex items-center gap-1"><i data-lucide="info" className="w-3 h-3"></i> Hint</p>
-                                                <p className="text-sm text-blue-800 font-medium leading-relaxed">{activeTask.hint}</p>
-                                            </div>
+                                            {/* 提示內容 (僅當點擊錦囊後顯示) */}
+                                            {isHintVisible && (
+                                                <div className="page-enter p-4 bg-blue-50 rounded-2xl border-2 border-blue-100">
+                                                    <p className="text-[10px] font-black text-blue-500 uppercase flex items-center gap-1 mb-1">
+                                                        <i data-lucide="sparkles" className="w-3 h-3"></i> 錦囊提示：
+                                                    </p>
+                                                    <p className="text-sm font-bold text-blue-900 leading-relaxed">{activeTask.hint}</p>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>
-                                {!feedback && cooldown === 0 && (
-                                    <button onClick={() => setGameState('list')} className="w-full text-slate-400 font-bold py-2 mt-2">返回主頁面</button>
-                                )}
+                                <button onClick={() => setGameState('list')} className="w-full text-slate-400 font-bold py-2">返回主頁面</button>
                             </div>
                         )}
 
                         {gameState === 'result' && (
-                            <div className="animate-in space-y-6 mt-4">
+                            <div className="page-enter space-y-6 mt-4 pb-10">
                                 <div className="bg-white p-8 rounded-[3rem] shadow-2xl border-4 border-pink-400 text-center relative overflow-hidden">
-                                    <div className="absolute -top-10 -left-10 w-32 h-32 bg-pink-100 rounded-full"></div>
-                                    <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-yellow-100 rounded-full"></div>
-                                    
-                                    <div className="text-7xl mb-4 relative z-10 drop-shadow-md animate-bounce">🧺</div>
-                                    <h2 className="text-3xl font-black text-pink-600 relative z-10">尋寶大成功！</h2>
-                                    <p className="text-pink-400 text-xs mt-2 font-bold uppercase tracking-widest relative z-10">Easter Egg Hunter</p>
-                                    
-                                    <div className="my-8 bg-gradient-to-b from-slate-800 to-slate-900 p-8 rounded-[2rem] text-white shadow-xl relative z-10 border-2 border-slate-700">
-                                        <p className="text-[10px] text-yellow-300 mb-3 font-black tracking-widest uppercase flex items-center justify-center gap-2"><span>✨</span> E-Certificate ID <span>✨</span></p>
-                                        <p className="text-3xl font-mono font-black text-white tracking-tighter drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]">{uniqueId}</p>
-                                        <div className="mt-6 pt-6 border-t border-slate-700">
-                                            <p className="text-xl font-black text-pink-200">{currentTime}</p>
-                                            <p className="text-[10px] text-slate-400 mt-2 font-bold">請向 YMCA 職員展示此畫面領取復活節禮物 🐰</p>
-                                        </div>
+                                    <div className="text-7xl mb-4 animate-bounce">🧺</div>
+                                    <h2 className="text-3xl font-black text-pink-600">尋寶大成功！</h2>
+                                    <div className="my-8 bg-slate-900 p-8 rounded-[2rem] text-white shadow-xl border-2 border-slate-700">
+                                        <p className="text-[10px] text-yellow-300 mb-3 font-black tracking-widest uppercase">✨ E-Certificate ID ✨</p>
+                                        <p className="text-3xl font-mono font-black tracking-tighter">{uniqueId}</p>
+                                        <div className="mt-6 pt-6 border-t border-slate-700 text-xl font-black text-pink-200">{currentTime}</div>
                                     </div>
-                                    
-                                    <div className="bg-green-50 text-green-600 py-4 rounded-2xl font-black text-sm border-2 border-green-200 flex items-center justify-center gap-2 relative z-10 shadow-sm">
+                                    <div className="bg-green-50 text-green-600 py-4 rounded-2xl font-black text-sm border-2 border-green-200 flex items-center justify-center gap-2">
                                         <i data-lucide="gift" className="w-5 h-5"></i> 禮物換領資格確認
                                     </div>
                                 </div>
-                                
-                                {!showResetConfirm ? (
-                                    <button onClick={() => setShowResetConfirm(true)} className="w-full text-slate-400 text-xs underline font-bold uppercase tracking-widest">Reset Progress</button>
-                                ) : (
-                                    <div className="bg-red-50 border-2 border-red-200 p-4 rounded-2xl text-center space-y-3 animate-in shadow-sm">
-                                        <p className="text-xs text-red-600 font-black">警告：重置後所有尋寶進度將消失！</p>
-                                        <div className="flex gap-2 justify-center">
-                                            <button onClick={() => setShowResetConfirm(false)} className="px-5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600">取消</button>
-                                            <button onClick={resetProgress} className="px-5 py-2 bg-red-500 rounded-xl text-xs font-black text-white shadow-md active:scale-95">確認放棄</button>
-                                        </div>
-                                    </div>
-                                )}
+                                <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="w-full text-slate-400 text-xs underline font-bold tracking-widest">重置遊戲 (RESET)</button>
                             </div>
                         )}
                     </main>
